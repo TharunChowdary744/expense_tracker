@@ -158,7 +158,7 @@ def update_expense(expense_id: str, expense: ExpenseCreate, current_user: UserBa
     return ExpenseInDB(**existing_expense)
 
 @app.get("/expenses", response_model=list[ExpenseInDB])
-def get_expenses(start_date: datetime | None = None, end_date: datetime | None = None, category: str | None = None, current_user: UserBase = Depends(get_current_user)):
+def get_expenses(start_date: datetime | None = None, end_date: datetime | None = None, category: str | None = None, type: str | None = None, current_user: UserBase = Depends(get_current_user)):
     query = {"user_id": current_user.email}
     if start_date:
         query["created_date"] = {"$gte": start_date}
@@ -167,6 +167,8 @@ def get_expenses(start_date: datetime | None = None, end_date: datetime | None =
         query["created_date"].update({"$lte": end_date})
     if category:
         query["category"] = category
+    if type:
+        query["type"] = type
 
     expenses = expenses_collection.find(query)
     return [
