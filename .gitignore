@@ -1,0 +1,12 @@
+# Node.js
+node_modules/
+dist/
+build/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
