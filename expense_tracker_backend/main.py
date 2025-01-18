@@ -30,6 +30,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 class UserBase(BaseModel):
     email: EmailStr
     name: str = Field(..., min_length=3, max_length=50)
+    currency: str = Field(..., min_length=3, max_length=3)  # Added currency to user profile
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6)
@@ -52,6 +53,8 @@ class ExpenseBase(BaseModel):
     currency: str = Field(..., min_length=3, max_length=3)
     created_date: datetime | None = None
     last_updated_date: datetime | None = None
+    is_recurring: bool = False
+    recurrence_interval: str | None = None  # daily, weekly, monthly
 
 class ExpenseCreate(ExpenseBase):
     pass
@@ -133,6 +136,9 @@ def get_profile(current_user: UserBase = Depends(get_current_user)):
 # Expense Management Endpoints
 @app.post("/expenses", response_model=ExpenseInDB)
 def create_expense(expense: ExpenseCreate, current_user: UserBase = Depends(get_current_user)):
+    if expense.is_recurring and not expense.recurrence_interval:
+        raise HTTPException(status_code=400, detail="Recurring expenses must have a recurrence interval.")
+
     expense_dict = expense.dict()
     expense_dict.update({
         "created_date": datetime.utcnow(),
@@ -141,6 +147,7 @@ def create_expense(expense: ExpenseCreate, current_user: UserBase = Depends(get_
     })
     result = expenses_collection.insert_one(expense_dict)
     expense_dict["id"] = str(result.inserted_id)
+
     return ExpenseInDB(**expense_dict)
 
 @app.put("/expenses/{expense_id}", response_model=ExpenseInDB)
@@ -149,8 +156,12 @@ def update_expense(expense_id: str, expense: ExpenseCreate, current_user: UserBa
     if not existing_expense:
         raise HTTPException(status_code=404, detail="Expense not found.")
 
+    if expense.is_recurring and not expense.recurrence_interval:
+        raise HTTPException(status_code=400, detail="Recurring expenses must have a recurrence interval.")
+
     update_data = expense.dict()
     update_data["last_updated_date"] = datetime.utcnow()
+
     expenses_collection.update_one({"_id": ObjectId(expense_id)}, {"$set": update_data})
 
     existing_expense.update(update_data)
@@ -180,13 +191,23 @@ def get_expenses(start_date: datetime | None = None, end_date: datetime | None =
             amount=expense["amount"],
             currency=expense["currency"],
             created_date=expense["created_date"],
-            last_updated_date=expense["last_updated_date"]
+            last_updated_date=expense["last_updated_date"],
+            is_recurring=expense.get("is_recurring", False),
+            recurrence_interval=expense.get("recurrence_interval")
         ) for expense in expenses
     ]
 
 @app.delete("/expenses/{expense_id}", response_model=dict)
 def delete_expense(expense_id: str, current_user: UserBase = Depends(get_current_user)):
-    result = expenses_collection.delete_one({"_id": ObjectId(expense_id), "user_id": current_user.email})
-    if result.deleted_count == 0:
+    existing_expense = expenses_collection.find_one({"_id": ObjectId(expense_id), "user_id": current_user.email})
+    if not existing_expense:
         raise HTTPException(status_code=404, detail="Expense not found.")
+
+    if existing_expense.get("is_recurring"):
+        expenses_collection.delete_many({"recurrence_group": existing_expense.get("recurrence_group")})
+    else:
+        result = expenses_collection.delete_one({"_id": ObjectId(expense_id)})
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Expense not found.")
+
     return {"message": "Expense deleted successfully."}
